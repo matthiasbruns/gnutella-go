@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
+	"strings"
 )
 
 type void struct{}
@@ -16,8 +19,8 @@ var sources = map[Vendor][]string{
 	"bazooka": {"http://cache.trillinux.org/g2/bazooka.php"},
 }
 
-func QueryBazookaVendors(ctx context.Context) []string {
-	allIPs := make(map[string]void)
+func QueryBazookaVendors(ctx context.Context) []*net.TCPAddr {
+	allIpPorts := make(map[string]void)
 
 	for _, u := range sources["bazooka"] {
 		uri, _ := url.Parse(u)
@@ -25,21 +28,35 @@ func QueryBazookaVendors(ctx context.Context) []string {
 		q.Set("showhosts", "1")
 		q.Set("net", "gnutella2")
 		uri.RawQuery = q.Encode()
-		ips, _ := getBazookaIPs(ctx, uri)
+		ips, _ := getBazookaIpPortss(ctx, uri)
 
 		for _, ip := range ips {
-			allIPs[ip] = void{}
+			allIpPorts[ip] = void{}
 		}
 	}
 
-	var allIPsSlice []string
-	for ip := range allIPs {
-		allIPsSlice = append(allIPsSlice, ip)
+	var allIPsSlice []*net.TCPAddr
+	for ipPort := range allIpPorts {
+		split := strings.Split(ipPort, ":")
+		if len(split) != 2 {
+			continue
+		}
+
+		port, err := strconv.Atoi(split[1])
+		if err != nil {
+			continue
+		}
+
+		allIPsSlice = append(allIPsSlice, &net.TCPAddr{
+			IP:   net.ParseIP(split[0]),
+			Port: port,
+		})
 	}
+
 	return allIPsSlice
 }
 
-func getBazookaIPs(ctx context.Context, uri *url.URL) ([]string, error) {
+func getBazookaIpPortss(ctx context.Context, uri *url.URL) ([]string, error) {
 	const filter = `gnutella:host:(\d*.\d*.\d*.\d*:\d*)`
 	ipsRegexp := regexp.MustCompile(filter)
 
@@ -72,6 +89,9 @@ func getBazookaIPs(ctx context.Context, uri *url.URL) ([]string, error) {
 	}
 
 	ips := ipsRegexp.FindAllString(string(body), -1)
+	for i, ip := range ips {
+		ips[i] = strings.TrimPrefix(ip, "gnutella:host:")
+	}
 
 	return ips, nil
 }
